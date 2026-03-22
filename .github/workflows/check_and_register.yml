@@ -1,0 +1,138 @@
+name: register-automation
+
+on:
+  workflow_dispatch:
+    inputs:
+      manual_total_accounts:
+        description: Exact accounts to register this run; empty means threshold-based
+        required: false
+        default: ""
+      min_count:
+        description: Trigger when sub2api total is lower than this value
+        required: false
+        default: "2000"
+      topup_batch_size:
+        description: Minimum accounts to register once triggered
+        required: false
+        default: "10"
+      topup_max_count:
+        description: Maximum accounts to register in one run
+        required: false
+        default: "100"
+      max_workers:
+        description: Parallel worker count
+        required: false
+        default: "3"
+      cpa_cleanup:
+        description: Run CPA cleanup before register (true/false)
+        required: false
+        default: "false"
+      force_register:
+        description: Ignore threshold and force run (true/false)
+        required: false
+        default: "false"
+  schedule:
+    - cron: "20 * * * *"
+
+concurrency:
+  group: register-automation
+  cancel-in-progress: false
+
+jobs:
+  check-and-register:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    env:
+      PYTHONUNBUFFERED: "1"
+      MODE: "github"
+
+      MANUAL_TOTAL_ACCOUNTS: ${{ github.event.inputs.manual_total_accounts || '' }}
+      SUB2API_MIN_COUNT: ${{ github.event.inputs.min_count || vars.SUB2API_MIN_COUNT || '2000' }}
+      TOPUP_BATCH_SIZE: ${{ github.event.inputs.topup_batch_size || vars.TOPUP_BATCH_SIZE || '10' }}
+      TOPUP_MAX_COUNT: ${{ github.event.inputs.topup_max_count || vars.TOPUP_MAX_COUNT || '100' }}
+      REGISTER_MAX_WORKERS: ${{ github.event.inputs.max_workers || vars.REGISTER_MAX_WORKERS || '3' }}
+      REGISTER_CPA_CLEANUP: ${{ github.event.inputs.cpa_cleanup || vars.REGISTER_CPA_CLEANUP || 'false' }}
+      FORCE_REGISTER: ${{ github.event.inputs.force_register || vars.FORCE_REGISTER || 'false' }}
+      REGISTER_OUTPUT_FILE: ${{ vars.REGISTER_OUTPUT_FILE || 'registered_accounts.txt' }}
+
+      MAIL_PROVIDER: ${{ secrets.MAIL_PROVIDER || 'duckmail' }}
+      DUCKMAIL_API_BASE: ${{ secrets.DUCKMAIL_API_BASE || 'https://api.duckmail.sbs' }}
+      DUCKMAIL_BEARER: ${{ secrets.DUCKMAIL_BEARER }}
+      CFMAIL_CONFIG_PATH: ${{ vars.CFMAIL_CONFIG_PATH || 'zhuce5_cfmail_accounts.json' }}
+      CFMAIL_PROFILE: ${{ vars.CFMAIL_PROFILE || 'auto' }}
+
+      PROXY: ${{ secrets.PROXY }}
+      REGISTER_PROXY: ${{ secrets.REGISTER_PROXY }}
+      PROXY_LIST_URL: ${{ secrets.PROXY_LIST_URL }}
+      PROXY_LIST_BEARER: ${{ secrets.PROXY_LIST_BEARER }}
+      STABLE_PROXY: ${{ secrets.STABLE_PROXY }}
+      STABLE_PROXY_FILE: ${{ vars.STABLE_PROXY_FILE || 'stable_proxy.txt' }}
+      PREFER_STABLE_PROXY: ${{ vars.PREFER_STABLE_PROXY || 'true' }}
+      PROXY_VALIDATE_ENABLED: ${{ vars.PROXY_VALIDATE_ENABLED || 'true' }}
+      PROXY_VALIDATE_TIMEOUT_SECONDS: ${{ vars.PROXY_VALIDATE_TIMEOUT_SECONDS || '6' }}
+      PROXY_VALIDATE_WORKERS: ${{ vars.PROXY_VALIDATE_WORKERS || '40' }}
+      PROXY_VALIDATE_TEST_URL: ${{ vars.PROXY_VALIDATE_TEST_URL || 'https://auth.openai.com/' }}
+      PROXY_MAX_RETRIES_PER_REQUEST: ${{ vars.PROXY_MAX_RETRIES_PER_REQUEST || '30' }}
+      PROXY_BAD_TTL_SECONDS: ${{ vars.PROXY_BAD_TTL_SECONDS || '180' }}
+      PROXY_RETRY_ATTEMPTS_PER_ACCOUNT: ${{ vars.PROXY_RETRY_ATTEMPTS_PER_ACCOUNT || '20' }}
+
+      ENABLE_OAUTH: ${{ vars.ENABLE_OAUTH || 'true' }}
+      OAUTH_REQUIRED: ${{ vars.OAUTH_REQUIRED || 'true' }}
+      OAUTH_ISSUER: ${{ vars.OAUTH_ISSUER || 'https://auth.openai.com' }}
+      OAUTH_CLIENT_ID: ${{ secrets.OAUTH_CLIENT_ID || 'app_EMoamEEZ73f0CkXaXp7hrann' }}
+      OAUTH_REDIRECT_URI: ${{ vars.OAUTH_REDIRECT_URI || 'http://localhost:1455/auth/callback' }}
+
+      TOKEN_JSON_DIR: ${{ vars.TOKEN_JSON_DIR || 'codex_tokens' }}
+      AK_FILE: ${{ vars.AK_FILE || 'ak.txt' }}
+      RK_FILE: ${{ vars.RK_FILE || 'rk.txt' }}
+      OUTPUT_FILE: ${{ vars.REGISTER_OUTPUT_FILE || 'registered_accounts.txt' }}
+
+      AUTO_UPLOAD_CPA: ${{ vars.AUTO_UPLOAD_CPA || 'true' }}
+      CPA_BASE_URL: ${{ secrets.CPA_BASE_URL }}
+      CPA_MANAGEMENT_KEY: ${{ secrets.CPA_MANAGEMENT_KEY }}
+      CPA_MIN_CANDIDATES: ${{ vars.CPA_MIN_CANDIDATES || '200' }}
+      AUTO_UPLOAD_SUB2API: ${{ vars.AUTO_UPLOAD_SUB2API || 'false' }}
+      SUB2API_BASE_URL: ${{ secrets.SUB2API_BASE_URL }}
+      SUB2API_BEARER: ${{ secrets.SUB2API_BEARER }}
+      SUB2API_EMAIL: ${{ secrets.SUB2API_EMAIL }}
+      SUB2API_PASSWORD: ${{ secrets.SUB2API_PASSWORD }}
+      SUB2API_GROUP_IDS: ${{ vars.SUB2API_GROUP_IDS || '2' }}
+      SUB2API_MIN_CANDIDATES: ${{ vars.SUB2API_MIN_CANDIDATES || '200' }}
+      SUB2API_PROXY_ID: ${{ vars.SUB2API_PROXY_ID || '0' }}
+      SUB2API_PROXY_NAME: ${{ vars.SUB2API_PROXY_NAME || '' }}
+      SUB2API_AUTO_ASSIGN_PROXY: ${{ vars.SUB2API_AUTO_ASSIGN_PROXY || 'false' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Prepare runtime directories
+        shell: bash
+        run: |
+          mkdir -p "${TOKEN_JSON_DIR:-codex_tokens}"
+          touch "${REGISTER_OUTPUT_FILE:-registered_accounts.txt}"
+
+      - name: Check pool and run register when needed
+        run: python scripts/check_and_register.py
+
+      - name: Upload run artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: register-automation-${{ github.run_id }}
+          if-no-files-found: ignore
+          path: |
+            ${{ env.REGISTER_OUTPUT_FILE }}
+            ${{ env.AK_FILE }}
+            ${{ env.RK_FILE }}
+            ${{ env.TOKEN_JSON_DIR }}/*.json

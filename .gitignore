@@ -1,0 +1,17 @@
+.venv/
+.vscode/
+__pycache__/
+*.pyc
+
+# Local runtime / generated data
+codex_tokens/
+registered_accounts.txt
+ak.txt
+rk.txt
+stable_proxy.txt
+
+# Local secret config
+config.json
+
+# Keep the share-safe example file only
+!config.example.json
