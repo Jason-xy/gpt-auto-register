@@ -69,7 +69,8 @@ def _fetch_sub2api_total(token: str) -> int:
 
     headers = {"Accept": "application/json"}
     if token:
-        headers["Authorization"] = f"Bearer {token}"
+        # Sub2Api uses X-API-Key header (not Bearer)
+        headers["X-API-Key"] = token
 
     resp = cffi.get(
         f"{base_url}/api/v1/admin/accounts",
