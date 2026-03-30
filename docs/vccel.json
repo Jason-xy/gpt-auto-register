@@ -1,0 +1,10 @@
+{
+  "name": "gpt-auto-register",
+  "site_url": "https://autocodexregister.github.io",
+  "branch": "main",
+  "cname": "autocodexregister"
+  "author": "autocodexregister"
+  "author_email": "autocodexregister@example.com"
+  "logo": "https://avatars.githubusercontent.com/u/270183816?v=4",
+  "markdown": true
+}
