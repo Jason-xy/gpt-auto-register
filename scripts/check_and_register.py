@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 from pathlib import Path
 
 from curl_cffi import requests as cffi
@@ -8,7 +9,8 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-import ncs_register as reg
+import simple_register as reg
+from sync_manager import AccountSyncManager
 
 
 def _env_int(name: str, default: int) -> int:
@@ -97,7 +99,6 @@ def main() -> int:
     batch_size = _env_int("TOPUP_BATCH_SIZE", 10)
     max_topup = _env_int("TOPUP_MAX_COUNT", 100)
     max_workers = _env_int("REGISTER_MAX_WORKERS", 3)
-    cpa_cleanup = _env_bool("REGISTER_CPA_CLEANUP", False)
     force_run = _env_bool("FORCE_REGISTER", False)
 
     output_file = str(
@@ -162,8 +163,7 @@ def main() -> int:
         f"need={need}, "
         f"max_workers={max_workers}, "
         f"proxy={'set' if proxy else 'unset'}, "
-        f"output_file={output_file}, "
-        f"cpa_cleanup={cpa_cleanup})"
+        f"output_file={output_file})"
     )
 
     _write_github_output("sub2api_total", total)
@@ -182,7 +182,6 @@ def main() -> int:
         f"- Max workers: {max_workers}",
         f"- Force run: {force_run}",
         f"- Manual total accounts: {manual_total_accounts or 0}",
-        f"- CPA cleanup: {cpa_cleanup}",
     ])
 
     reg.run_batch(
@@ -190,8 +189,34 @@ def main() -> int:
         output_file=output_file,
         max_workers=max_workers,
         proxy=proxy,
-        cpa_cleanup=cpa_cleanup,
     )
+
+    # 自动上传到 Sub2Api
+    auto_upload_sub2api = _env_bool("AUTO_UPLOAD_SUB2API", False)
+    if auto_upload_sub2api:
+        print("\n[Action] 开始上传账号到 Sub2Api...")
+        try:
+            manager = AccountSyncManager()
+            if manager.enable_sub2api:
+                results = manager.sync_all_tokens(
+                    token_dir=os.getenv("TOKEN_JSON_DIR", "codex_tokens"),
+                    accounts_file=output_file
+                )
+                print(f"[Action] Sub2Api 上传完成: 成功 {results['sub2api_success']} / 失败 {results['sub2api_failed']}")
+                _write_github_output("sub2api_upload_success", results['sub2api_success'])
+                _write_github_output("sub2api_upload_failed", results['sub2api_failed'])
+                _append_step_summary([
+                    "",
+                    "### Sub2Api Upload",
+                    "",
+                    f"- Success: {results['sub2api_success']}",
+                    f"- Failed: {results['sub2api_failed']}",
+                ])
+            else:
+                print("[Action] Sub2Api 未配置，跳过上传")
+        except Exception as e:
+            print(f"[Action] Sub2Api 上传失败: {e}")
+
     return 0
 
 
