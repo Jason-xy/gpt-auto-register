@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auto CPA Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            color: #eee;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 12px;
+        }
+        .header h1 {
+            font-size: 24px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .status-badge {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .status-healthy { background: #10b981; }
+        .status-warning { background: #f59e0b; }
+        .status-error { background: #ef4444; }
+        .card {
+            background: rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .card h2 {
+            font-size: 18px;
+            margin-bottom: 15px;
+            color: #94a3b8;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+        .stat-box {
+            background: rgba(255,255,255,0.05);
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 32px;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        .stat-label {
+            font-size: 12px;
+            color: #94a3b8;
+        }
+        .stat-value.healthy { color: #10b981; }
+        .stat-value.warning { color: #f59e0b; }
+        .stat-value.error { color: #ef4444; }
+        .action-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .action-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .action-item:hover {
+            background: rgba(255,255,255,0.05);
+        }
+        .action-info {
+            flex: 1;
+        }
+        .action-id {
+            font-family: monospace;
+            font-size: 12px;
+            color: #94a3b8;
+        }
+        .action-status {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .status-success { background: #10b981; }
+        .status-in_progress { background: #3b82f6; animation: pulse 2s infinite; }
+        .status-failure { background: #ef4444; }
+        .status-pending { background: #6b7280; }
+        .status-queued { background: #8b5cf6; }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-primary {
+            background: #3b82f6;
+            color: white;
+        }
+        .btn-primary:hover { background: #2563eb; }
+        .btn-danger {
+            background: #ef4444;
+            color: white;
+        }
+        .btn-danger:hover { background: #dc2626; }
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .config-section {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+        }
+        .config-item {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        .config-item label {
+            font-size: 12px;
+            color: #94a3b8;
+        }
+        .config-item input,
+        .config-item select {
+            padding: 10px;
+            border-radius: 6px;
+            border: 1px solid rgba(255,255,255,0.1);
+            background: rgba(255,255,255,0.05);
+            color: #eee;
+            font-size: 14px;
+        }
+        .log-output {
+            background: rgba(0,0,0,0.3);
+            border-radius: 8px;
+            padding: 15px;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+            color: #10b981;
+        }
+        .log-line {
+            margin: 2px 0;
+        }
+        .log-error { color: #ef4444; }
+        .log-warning { color: #f59e0b; }
+        .spinner {
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: #3b82f6;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .loading {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: #94a3b8;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                    <path d="M2 17l10 5 10-5"/>
+                    <path d="M2 12l10 5 10-5"/>
+                </svg>
+                Auto CPA Dashboard
+            </h1>
+            <div id="healthStatus" class="status-badge status-warning">检查中...</div>
+        </div>
+
+        <div class="card">
+            <h2>📊 Sub2Api 账号池状态</h2>
+            <div class="stats-grid">
+                <div class="stat-box">
+                    <div class="stat-label">总账号数</div>
+                    <div class="stat-value" id="totalAccounts">-</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">健康账号</div>
+                    <div class="stat-value healthy" id="healthyAccounts">-</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">不健康账号</div>
+                    <div class="stat-value error" id="unhealthyAccounts">-</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">健康率</div>
+                    <div class="stat-value" id="healthRate">-</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>🚀 手动控制</h2>
+            <div class="config-section">
+                <div class="config-item">
+                    <label>注册数量</label>
+                    <input type="number" id="registerCount" value="10" min="1" max="100">
+                </div>
+                <div class="config-item">
+                    <label>并发数</label>
+                    <input type="number" id="maxWorkers" value="3" min="1" max="10">
+                </div>
+                <div class="config-item">
+                    <label>最小健康阈值</label>
+                    <input type="number" id="minHealthy" value="2000" min="0">
+                </div>
+            </div>
+            <div class="btn-group" style="margin-top: 15px;">
+                <button class="btn btn-primary" onclick="triggerAction('check')">🔍 检查健康度</button>
+                <button class="btn btn-primary" onclick="triggerAction('register')">📝 立即注册</button>
+                <button class="btn btn-primary" onclick="triggerAction('upload')">📤 上传账号</button>
+                <button class="btn btn-primary" onclick="triggerAction('all')">🔄 全自动流程</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>📋 最近工作流运行</h2>
+            <div class="loading" id="workflowsLoading">
+                <div class="spinner"></div>
+                <span>加载中...</span>
+            </div>
+            <div class="action-list" id="workflowList"></div>
+        </div>
+
+        <div class="card" id="logCard" style="display: none;">
+            <h2>📜 运行日志</h2>
+            <div class="log-output" id="logOutput"></div>
+        </div>
+    </div>
+
+    <script>
+        // 配置 - GitHub 仓库信息
+        const CONFIG = {
+            owner: 'autocodexregister',  // GitHub 组织名
+            repo: 'gpt-auto-register',  // 仓库名
+            workflowId: 'auto_register.yml',  // workflow 文件名
+            // GitHub Personal Access Token (需要 repo 和 workflow 权限)
+            // 在浏览器控制台中设置: localStorage.setItem('github_token', 'your_token_here')
+            get token() {
+                return localStorage.getItem('github_token') || prompt('请输入 GitHub Personal Access Token:');
+            }
+        };
+
+        const API_BASE = 'https://api.github.com';
+
+        // 获取 workflow 运行列表
+        async function getWorkflowRuns() {
+            const token = localStorage.getItem('github_token');
+            if (!token) {
+                document.getElementById('workflowsLoading').innerHTML = '<span style="color: #f59e0b;">请先配置 GitHub Token</span>';
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/repos/${CONFIG.owner}/${CONFIG.repo}/actions/workflows/${CONFIG.workflowId}/runs?per_page=10`, {
+                    headers: {
+                        'Authorization': `token ${token}`,
+                        'Accept': 'application/vnd.github.v3+json'
+                    }
+                });
+
+                if (!response.ok) throw new Error('API 请求失败');
+
+                const data = await response.json();
+                displayWorkflowRuns(data.workflow_runs);
+            } catch (error) {
+                console.error(error);
+                document.getElementById('workflowsLoading').innerHTML = `<span style="color: #ef4444;">加载失败: ${error.message}</span>`;
+            }
+        }
+
+        // 显示 workflow 运行列表
+        function displayWorkflowRuns(runs) {
+            const container = document.getElementById('workflowList');
+            document.getElementById('workflowsLoading').style.display = 'none';
+
+            if (!runs || runs.length === 0) {
+                container.innerHTML = '<div style="padding: 15px; text-align: center; color: #94a3b8;">暂无运行记录</div>';
+                return;
+            }
+
+            container.innerHTML = runs.map(run => `
+                <div class="action-item" onclick="showRunDetails('${run.id}', '${run.status}', '${run.conclusion}')">
+                    <div class="action-info">
+                        <div class="action-id">#${run.run_number} - ${new Date(run.created_at).toLocaleString('zh-CN')}</div>
+                        <div style="font-size: 12px; color: #94a3b8; margin-top: 4px;">
+                            ${run.event === 'schedule' ? '🕐 定时任务' : '🔧 手动触发'} |
+                            触发者: ${run.triggered_by || 'N/A'}
+                        </div>
+                    </div>
+                    <div class="action-status status-${run.status === 'completed' ? (run.conclusion || 'pending') : run.status}">
+                        ${getStatusText(run.status, run.conclusion)}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // 获取状态文本
+        function getStatusText(status, conclusion) {
+            const statusMap = {
+                'completed': conclusion === 'success' ? '成功' : conclusion === 'failure' ? '失败' : '已完成',
+                'in_progress': '运行中',
+                'queued': '排队中',
+                'pending': '等待中'
+            };
+            return statusMap[status] || status;
+        }
+
+        // 触发 workflow
+        async function triggerAction(action) {
+            const token = localStorage.getItem('github_token');
+            if (!token) {
+                alert('请先配置 GitHub Token!');
+                localStorage.setItem('github_token', prompt('请输入 GitHub Personal Access Token (需要 repo 和 workflow 权限):'));
+                return;
+            }
+
+            const inputs = {
+                action: action,
+                min_healthy: document.getElementById('minHealthy').value,
+                register_count: document.getElementById('registerCount').value,
+                max_workers: document.getElementById('maxWorkers').value,
+            };
+
+            try {
+                const response = await fetch(`${API_BASE}/repos/${CONFIG.owner}/${CONFIG.repo}/actions/workflows/${CONFIG.workflowId}/dispatches`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `token ${token}`,
+                        'Accept': 'application/vnd.github.v3+json',
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        ref: 'main',
+                        inputs: inputs
+                    })
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.message || '触发失败');
+                }
+
+                alert(`✅ 成功触发 "${action}" 任务!`);
+                setTimeout(() => getWorkflowRuns(), 2000);
+            } catch (error) {
+                alert(`❌ 触发失败: ${error.message}`);
+            }
+        }
+
+        // 显示运行详情
+        async function showRunDetails(runId, status, conclusion) {
+            const token = localStorage.getItem('github_token');
+            if (!token) return;
+
+            const logCard = document.getElementById('logCard');
+            const logOutput = document.getElementById('logOutput');
+            logCard.style.display = 'block';
+            logOutput.innerHTML = '<div class="loading"><div class="spinner"></div><span>加载日志中...</span></div>';
+
+            try {
+                // 获取运行中的 jobs
+                const response = await fetch(`${API_BASE}/repos/${CONFIG.owner}/${CONFIG.repo}/actions/runs/${runId}/jobs`, {
+                    headers: {
+                        'Authorization': `token ${token}`,
+                        'Accept': 'application/vnd.github.v3+json'
+                    }
+                });
+
+                const data = await response.json();
+                if (data.jobs && data.jobs.length > 0) {
+                    const jobId = data.jobs[0].id;
+                    await showJobLogs(runId, jobId);
+                } else {
+                    logOutput.innerHTML = '<div class="log-error">暂无日志</div>';
+                }
+            } catch (error) {
+                logOutput.innerHTML = `<div class="log-error">加载失败: ${error.message}</div>`;
+            }
+        }
+
+        // 显示 job 日志
+        async function showJobLogs(runId, jobId) {
+            const token = localStorage.getItem('github_token');
+            const logOutput = document.getElementById('logOutput');
+
+            try {
+                const response = await fetch(`${API_BASE}/repos/${CONFIG.owner}/${CONFIG.repo}/actions/jobs/${jobId}/logs`, {
+                    headers: {
+                        'Authorization': `token ${token}`,
+                        'Accept': 'application/vnd.github.v3+json'
+                    }
+                });
+
+                if (!response.ok) {
+                    if (response.status === 404) {
+                        logOutput.innerHTML = '<div class="log-warning">日志尚未生成，请稍后刷新</div>';
+                    } else {
+                        throw new Error('获取日志失败');
+                    }
+                    return;
+                }
+
+                const logText = await response.text();
+                displayLogs(logText);
+            } catch (error) {
+                logOutput.innerHTML = `<div class="log-error">获取日志失败: ${error.message}</div>`;
+            }
+        }
+
+        // 显示日志
+        function displayLogs(logText) {
+            const logOutput = document.getElementById('logOutput');
+            const lines = logText.split('\n').slice(-100); // 只显示最后100行
+
+            logOutput.innerHTML = lines.map(line => {
+                let className = 'log-line';
+                if (line.includes('[Error]') || line.includes('ERROR') || line.includes('失败')) {
+                    className += ' log-error';
+                } else if (line.includes('[Warning]') || line.includes('WARN') || line.includes('⚠️')) {
+                    className += ' log-warning';
+                }
+                return `<div class="${className}">${escapeHtml(line) || '&nbsp;'}</div>`;
+            }).join('');
+
+            logOutput.scrollTop = logOutput.scrollHeight;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // 初始化
+        function init() {
+            const token = localStorage.getItem('github_token');
+            if (!token) {
+                const newToken = prompt('请输入 GitHub Personal Access Token (需要 repo 和 workflow 权限):');
+                if (newToken) {
+                    localStorage.setItem('github_token', newToken);
+                }
+            }
+
+            getWorkflowRuns();
+            setInterval(getWorkflowRuns, 30000); // 每30秒刷新
+        }
+
+        init();
+    </script>
+</body>
+</html>
