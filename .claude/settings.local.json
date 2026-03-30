@@ -47,7 +47,10 @@
       "Bash(grep -r sk-[a-zA-Z0-9]+ C:Usersxs.claudeprojectsD--code-codex-register-auto-cpa-register --include=*.json)",
       "Bash(powershell -Command \"Invoke-WebRequest -Uri 'https://api.github.com/repos/autocodexregister/gpt-auto-register' -UseBasicParsing | Select-Object -ExpandProperty StatusCode\")",
       "Bash(powershell -Command \"Invoke-WebRequest -Uri 'https://api.github.com/orgs/autocodexregister/repos' -UseBasicParsing | Select-Object -ExpandProperty Content\")",
-      "Bash(gh auth:*)"
+      "Bash(gh auth:*)",
+      "Bash(mkdir -p docs)",
+      "Bash(cp web/dashboard/index.html docs/index.html)",
+      "Bash(xxd)"
     ]
   }
 }
