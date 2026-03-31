@@ -53,6 +53,8 @@ env:
   # Sub2Api 配置
   SUB2API_BASE_URL: ${{ secrets.SUB2API_BASE_URL }}
   SUB2API_ADMIN_KEY: ${{ secrets.SUB2API_ADMIN_KEY }}
+  SUB2API_EMAIL: ${{secrets.SUB2API_EMAIL}}
+  SUB2API_PASSWORD: ${{secrets.SUB2API_PASSWORD}}
   SUB2API_MIN_HEALTHY: ${{ github.event.inputs.min_healthy || vars.SUB2API_MIN_HEALTHY || '2000' }}
   SUB2API_GROUP_IDS: ${{ vars.SUB2API_GROUP_IDS || '2' }}
   # CPA 配置
