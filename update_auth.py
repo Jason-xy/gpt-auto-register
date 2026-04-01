@@ -26,6 +26,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Lock
 from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
@@ -51,9 +52,32 @@ REAUTH_KEYWORDS = (
     "重新登录",
 )
 
+_PRINT_LOCK = Lock()
+
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _log(message: str, *, account_id: Optional[int] = None, email: str = "", stage: str = "") -> None:
+    parts = [f"[update_auth {_now_iso()}]"]
+    if stage:
+        parts.append(f"[{stage}]")
+    if account_id is not None:
+        label = str(account_id)
+        if email:
+            label = f"{label} {email}"
+        parts.append(f"[{label}]")
+    elif email:
+        parts.append(f"[{email}]")
+    with _PRINT_LOCK:
+        print(" ".join(parts), message, flush=True)
+
+
+class Sub2ApiAuthError(RuntimeError):
+    def __init__(self, message: str, status_code: Optional[int] = None):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 def _normalize_email(value: str) -> str:
@@ -93,6 +117,45 @@ def _load_config(config_path: str) -> Dict[str, Any]:
         config["oauth_redirect_uri"] = "http://localhost:1455/auth/callback"
 
     return config
+
+
+def _resolve_sub2api_runtime_config(config: Dict[str, Any]) -> Dict[str, Any]:
+    resolved = dict(config)
+    static_bearer = str(resolved.get("sub2api_bearer", "")).strip()
+    if static_bearer:
+        _log("Using Sub2Api auth mode: static bearer", stage="main")
+        return resolved
+
+    _log("Using Sub2Api auth mode: one-time login", stage="main")
+    client = Sub2ApiAdminClient(resolved)
+    last_error: Optional[Exception] = None
+    base_delay = 1.5
+
+    for attempt in range(1, 4):
+        try:
+            token = client.bootstrap_login()
+            resolved["sub2api_bearer"] = token
+            _log(f"Established shared Sub2Api bearer on attempt {attempt}", stage="main")
+            return resolved
+        except Sub2ApiAuthError as exc:
+            last_error = exc
+            retryable = exc.status_code in {429, 500, 502, 503, 504} or exc.status_code is None
+        except Exception as exc:
+            last_error = exc
+            retryable = True
+
+        if attempt >= 3 or not retryable:
+            break
+
+        delay = base_delay * (2 ** (attempt - 1)) + random.uniform(0.0, 0.5)
+        _log(
+            f"Shared Sub2Api login attempt {attempt} failed, retrying in {delay:.1f}s: {last_error}",
+            stage="main",
+        )
+        time.sleep(delay)
+
+    _log(f"Failed to establish shared Sub2Api bearer: {last_error}", stage="main")
+    raise RuntimeError(f"Failed to establish shared Sub2Api bearer: {last_error}") from last_error
 
 
 def _mail_api_url(api_base: str, path: str) -> str:
@@ -173,22 +236,34 @@ class Sub2ApiAdminClient:
         if not self.admin_bearer and (not self.admin_email or not self.admin_password):
             raise ValueError("Missing Sub2Api credentials: provide sub2api_bearer or sub2api_email + sub2api_password")
 
-    def _login(self) -> str:
-        if self.admin_bearer:
-            return self.admin_bearer
-        if self._token:
-            return self._token
+    def _request_login_token(self) -> str:
         resp = self.session.post(
             f"{self.base_url}/api/v1/auth/login",
             json={"email": self.admin_email, "password": self.admin_password},
             headers={"Content-Type": "application/json"},
             timeout=30,
         )
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            raise Sub2ApiAuthError(
+                f"Sub2Api login failed: {resp.status_code} - {resp.text[:300]}",
+                status_code=resp.status_code,
+            )
         data = resp.json()
         token = str((data.get("data") or {}).get("access_token") or "").strip()
         if not token:
-            raise RuntimeError("Sub2Api login succeeded but no access_token was returned")
+            raise Sub2ApiAuthError("Sub2Api login succeeded but no access_token was returned")
+        return token
+
+    def _login(self) -> str:
+        if self.admin_bearer:
+            return self.admin_bearer
+        if self._token:
+            return self._token
+        self._token = self._request_login_token()
+        return self._token
+
+    def bootstrap_login(self) -> str:
+        token = self._request_login_token()
         self._token = token
         return token
 
@@ -245,6 +320,13 @@ class Sub2ApiAdminClient:
             timeout=90,
             stream=True,
         )
+        if resp.status_code >= 400:
+            body = resp.text[:300]
+            try:
+                resp.close()
+            except Exception:
+                pass
+            raise RuntimeError(f"Sub2Api test failed: {resp.status_code} - {body}")
 
         text_parts: List[str] = []
         error_text = ""
@@ -521,9 +603,24 @@ class MoeMailClient:
                 ids.add(msg_id)
         return ids
 
-    def wait_for_openai_otp(self, email_id: str, baseline_ids: Set[str], timeout: int = 480) -> str:
+    def wait_for_openai_otp(
+        self,
+        email_id: str,
+        baseline_ids: Set[str],
+        timeout: int = 480,
+        account_id: Optional[int] = None,
+        email: str = "",
+    ) -> str:
         deadline = time.time() + timeout
         seen = set(baseline_ids)
+        start_time = time.time()
+        next_report_after = 30
+        _log(
+            f"Waiting for mailbox OTP (timeout={timeout}s, baseline_messages={len(baseline_ids)})",
+            account_id=account_id,
+            email=email,
+            stage="oauth",
+        )
 
         while time.time() < deadline:
             detail = self.fetch_email_detail(email_id)
@@ -544,7 +641,17 @@ class MoeMailClient:
                 ])
                 code = _extract_verification_code(content)
                 if code:
+                    _log("Mailbox OTP received", account_id=account_id, email=email, stage="oauth")
                     return code
+            elapsed = int(time.time() - start_time)
+            if elapsed >= next_report_after:
+                _log(
+                    f"Still waiting for OTP ({elapsed}s/{timeout}s)",
+                    account_id=account_id,
+                    email=email,
+                    stage="oauth",
+                )
+                next_report_after += 30
             time.sleep(5)
         raise TimeoutError(f"Timed out waiting for mailbox verification code ({timeout}s)")
 
@@ -852,13 +959,21 @@ class OAuthRunner:
         has_login_session = any(getattr(cookie, "name", "") == "login_session" for cookie in self.session.cookies)
         return has_login_session, final_url
 
-    def run(self, mail_timeout: int) -> Dict[str, Any]:
+    def run(self, mail_timeout: int, account_id: Optional[int] = None) -> Dict[str, Any]:
+        _log("Ensuring mailbox", account_id=account_id, email=self.email, stage="oauth")
         mailbox = self.mail_client.ensure_email(self.email)
         email_id = str(mailbox.get("id") or "").strip()
         if not email_id:
             raise RuntimeError("DuckMail mailbox is missing email_id")
+        _log(
+            f"Mailbox ready (recreated={'yes' if mailbox.get('_recreated') else 'no'})",
+            account_id=account_id,
+            email=self.email,
+            stage="oauth",
+        )
         baseline_ids = self.mail_client.get_message_ids(email_id)
 
+        _log("Bootstrapping OAuth session", account_id=account_id, email=self.email, stage="oauth")
         has_login_session, authorize_final_url = self._bootstrap_oauth_session()
         if not authorize_final_url:
             raise RuntimeError("OAuth bootstrap did not return final_url")
@@ -875,6 +990,7 @@ class OAuthRunner:
         if not sentinel_authorize:
             raise RuntimeError("Failed to obtain sentinel token for authorize_continue")
 
+        _log("Submitting email to OAuth flow", account_id=account_id, email=self.email, stage="oauth")
         headers_continue = self._oauth_json_headers(continue_referer)
         headers_continue["openai-sentinel-token"] = sentinel_authorize
         resp_continue = self.session.post(
@@ -904,6 +1020,12 @@ class OAuthRunner:
         continue_data = resp_continue.json()
         continue_url = continue_data.get("continue_url", "")
         page_type = (continue_data.get("page") or {}).get("type", "")
+        _log(
+            f"Email accepted, next page={page_type or '-'}",
+            account_id=account_id,
+            email=self.email,
+            stage="oauth",
+        )
         need_oauth_otp = page_type == "email_otp_verification" or "email-verification" in continue_url or "email-otp" in continue_url
         skip_password = need_oauth_otp or page_type in ("create_account_password", "email_otp_verification", "consent", "organization_select")
 
@@ -918,6 +1040,7 @@ class OAuthRunner:
             )
             if not sentinel_pwd:
                 raise RuntimeError("Failed to obtain sentinel token for password_verify")
+            _log("Submitting password to OAuth flow", account_id=account_id, email=self.email, stage="oauth")
             headers_verify = self._oauth_json_headers(f"{self.oauth_issuer}/log-in/password")
             headers_verify["openai-sentinel-token"] = sentinel_pwd
             resp_verify = self.session.post(
@@ -933,11 +1056,25 @@ class OAuthRunner:
             verify_data = resp_verify.json()
             continue_url = verify_data.get("continue_url", "") or continue_url
             page_type = (verify_data.get("page") or {}).get("type", "") or page_type
+            _log(
+                f"Password accepted, next page={page_type or '-'}",
+                account_id=account_id,
+                email=self.email,
+                stage="oauth",
+            )
             need_oauth_otp = page_type == "email_otp_verification" or "email-verification" in continue_url or "email-otp" in continue_url
 
         if need_oauth_otp:
-            otp_code = self.mail_client.wait_for_openai_otp(email_id, baseline_ids, timeout=mail_timeout)
+            _log("OpenAI requested email OTP", account_id=account_id, email=self.email, stage="oauth")
+            otp_code = self.mail_client.wait_for_openai_otp(
+                email_id,
+                baseline_ids,
+                timeout=mail_timeout,
+                account_id=account_id,
+                email=self.email,
+            )
             headers_otp = self._oauth_json_headers(f"{self.oauth_issuer}/email-verification")
+            _log("Submitting email OTP", account_id=account_id, email=self.email, stage="oauth")
             resp_otp = self.session.post(
                 f"{self.oauth_issuer}/api/accounts/email-otp/validate",
                 json={"code": otp_code},
@@ -951,8 +1088,15 @@ class OAuthRunner:
             otp_data = resp_otp.json()
             continue_url = otp_data.get("continue_url", "") or continue_url
             page_type = (otp_data.get("page") or {}).get("type", "") or page_type
+            _log(
+                f"OTP accepted, next page={page_type or '-'}",
+                account_id=account_id,
+                email=self.email,
+                stage="oauth",
+            )
 
         if page_type == "add_phone" or "add-phone" in (continue_url or ""):
+            _log("OpenAI requires phone verification", account_id=account_id, email=self.email, stage="oauth")
             raise RuntimeError("OpenAI requires phone verification for this account")
 
         callback_url = None
@@ -994,6 +1138,8 @@ class OAuthRunner:
         if self.state and callback_state and callback_state != self.state:
             raise RuntimeError("State returned by callback does not match the state from auth_url")
 
+        _log("Captured OAuth callback", account_id=account_id, email=self.email, stage="oauth")
+
         return {
             "callback_url": callback_url,
             "code": _extract_code_from_url(callback_url),
@@ -1015,23 +1161,14 @@ def _process_account(
     mail_timeout: int,
     verify_after_update: bool,
 ) -> Dict[str, Any]:
-    admin = Sub2ApiAdminClient(config)
-    test_result = admin.test_account(int(account["id"]))
-
-    if test_result["success"] or not admin.is_reauth_error(test_result["error"]):
-        return {
-            "candidate": False,
-            "account_id": account["id"],
-            "email": account["email"],
-            "test_error": test_result["error"],
-        }
-
+    raw_account_id = account.get("id")
+    email = _normalize_email(account.get("email"))
     item: Dict[str, Any] = {
         "candidate": True,
-        "account_id": account["id"],
-        "email": account["email"],
+        "account_id": raw_account_id,
+        "email": email,
         "status": "skipped" if dry_run else "failed",
-        "test_error": test_result["error"],
+        "test_error": "",
         "session_id": None,
         "auth_url": None,
         "callback_url": None,
@@ -1040,26 +1177,59 @@ def _process_account(
         "error": "",
     }
 
-    if dry_run:
-        return item
-
     try:
+        account_id = int(raw_account_id)
+        item["account_id"] = account_id
+        _log("Starting account test", account_id=account_id, email=email, stage="account")
+        admin = Sub2ApiAdminClient(config)
+        test_result = admin.test_account(account_id)
+        item["test_error"] = test_result.get("error") or ""
+
+        if test_result["success"] or not admin.is_reauth_error(test_result["error"]):
+            item["candidate"] = False
+            if test_result["success"]:
+                _log("Account test passed, no reauth needed", account_id=account_id, email=email, stage="account")
+            else:
+                _log(
+                    f"Skipping non-reauth failure: {test_result['error'] or test_result.get('text') or 'unknown error'}",
+                    account_id=account_id,
+                    email=email,
+                    stage="account",
+                )
+            return {
+                "candidate": False,
+                "account_id": account_id,
+                "email": email,
+                "test_error": test_result["error"],
+            }
+
+        _log(f"Detected reauth candidate: {test_result['error']}", account_id=account_id, email=email, stage="account")
+
+        if dry_run:
+            _log("Dry run enabled, skipping OAuth/update", account_id=account_id, email=email, stage="account")
+            item["status"] = "skipped"
+            return item
+
+        _log("Generating auth URL", account_id=account_id, email=email, stage="account")
         generated = admin.generate_auth_url(account, redirect_uri=redirect_uri, default_proxy_id=default_proxy_id)
         item["session_id"] = generated.get("session_id")
         item["auth_url"] = generated.get("auth_url")
         item["redirect_uri"] = generated.get("redirect_uri") or item["redirect_uri"]
 
-        password = D1PasswordClient(config).get_password(account["email"])
+        _log("Fetching password from D1", account_id=account_id, email=email, stage="account")
+        password = D1PasswordClient(config).get_password(email)
+        _log("Password fetched from D1", account_id=account_id, email=email, stage="account")
         mail_client = MoeMailClient(config)
         oauth_result = OAuthRunner(
             auth_url=item["auth_url"],
             redirect_uri=item["redirect_uri"],
-            email=account["email"],
+            email=email,
             password=password,
             mail_client=mail_client,
-        ).run(mail_timeout=max(30, mail_timeout))
+        ).run(mail_timeout=max(30, mail_timeout), account_id=account_id)
         item["callback_url"] = oauth_result.get("callback_url")
 
+        _log("Exchanging OAuth code", account_id=account_id, email=email, stage="account")
         token_info = admin.exchange_code(
             session_id=item["session_id"],
             state=oauth_result.get("state") or "",
@@ -1067,13 +1237,16 @@ def _process_account(
             redirect_uri=item["redirect_uri"],
             proxy_id=generated.get("proxy_id"),
         )
-        current_account = admin.get_account(int(account["id"]))
+        _log("Fetching current account credentials", account_id=account_id, email=email, stage="account")
+        current_account = admin.get_account(account_id)
         current_credentials = current_account.get("credentials") if isinstance(current_account.get("credentials"), dict) else {}
         merged_credentials = admin.build_credentials(token_info, current_credentials)
-        admin.update_account_credentials(int(account["id"]), merged_credentials)
+        _log("Updating account credentials in Sub2Api", account_id=account_id, email=email, stage="account")
+        admin.update_account_credentials(account_id, merged_credentials)
 
         if verify_after_update:
-            post_test = admin.test_account(int(account["id"]))
+            _log("Running post-update verification", account_id=account_id, email=email, stage="account")
+            post_test = admin.test_account(account_id)
             item["post_update_verified"] = bool(post_test.get("success"))
             if not post_test.get("success"):
                 raise RuntimeError(f"Post-update verification failed: {post_test.get('error') or post_test.get('text') or 'unknown error'}")
@@ -1081,10 +1254,15 @@ def _process_account(
             item["post_update_verified"] = None
 
         item["status"] = "updated"
+        _log("Reauth completed successfully", account_id=account_id, email=email, stage="account")
         return item
     except Exception as exc:
+        if not item["test_error"]:
+            item["test_error"] = str(exc)
         item["error"] = str(exc)
         item["status"] = "failed"
+        log_account_id = item["account_id"] if isinstance(item.get("account_id"), int) else None
+        _log(f"Reauth failed: {exc}", account_id=log_account_id, email=email, stage="account")
         return item
 
 
@@ -1111,12 +1289,18 @@ def main() -> int:
         if str(raw_proxy_id or "").strip() not in {"", "0", "None", "null"}:
             default_proxy_id = int(raw_proxy_id)
 
-    admin = Sub2ApiAdminClient(config)
+    resolved_config = _resolve_sub2api_runtime_config(config)
+    admin = Sub2ApiAdminClient(resolved_config)
+    _log(
+        f"Starting run platform={args.platform} status={args.status} page_size={max(1, args.page_size)} max_workers={max(1, args.max_workers)} dry_run={args.dry_run}",
+        stage="main",
+    )
     accounts = admin.list_accounts(
         platform=args.platform,
         status=args.status,
         page_size=max(1, args.page_size),
     )
+    _log(f"Loaded {len(accounts)} account(s) from Sub2Api", stage="main")
 
     items: List[Dict[str, Any]] = []
     tested_count = len(accounts)
@@ -1124,25 +1308,53 @@ def main() -> int:
     success_count = 0
     failed_count = 0
     skipped_count = 0
+    completed_count = 0
 
     with ThreadPoolExecutor(max_workers=max(1, args.max_workers)) as executor:
-        futures = [
+        futures = {
             executor.submit(
                 _process_account,
                 account,
-                config,
+                resolved_config,
                 redirect_uri,
                 default_proxy_id,
                 args.dry_run,
                 args.mail_timeout,
                 not args.skip_post_verify,
-            )
+            ): account
             for account in accounts
-        ]
+        }
         for future in as_completed(futures):
-            result = future.result()
+            account = futures[future]
+            try:
+                result = future.result()
+            except Exception as exc:
+                result = {
+                    "candidate": True,
+                    "account_id": account["id"],
+                    "email": account["email"],
+                    "status": "failed",
+                    "test_error": str(exc),
+                    "session_id": None,
+                    "auth_url": None,
+                    "callback_url": None,
+                    "redirect_uri": redirect_uri,
+                    "post_update_verified": None,
+                    "error": str(exc),
+                }
+                _log(
+                    f"Worker exception converted to failed result: {exc}",
+                    account_id=int(account["id"]),
+                    email=account["email"],
+                    stage="main",
+                )
+            completed_count += 1
             if not result.get("candidate"):
                 skipped_count += 1
+                _log(
+                    f"Progress {completed_count}/{tested_count} | candidates={candidate_count} success={success_count} failed={failed_count} skipped={skipped_count}",
+                    stage="main",
+                )
                 continue
 
             candidate_count += 1
@@ -1167,6 +1379,11 @@ def main() -> int:
             else:
                 skipped_count += 1
 
+            _log(
+                f"Progress {completed_count}/{tested_count} | candidates={candidate_count} success={success_count} failed={failed_count} skipped={skipped_count}",
+                stage="main",
+            )
+
     output = {
         "generated_at": _now_iso(),
         "source": admin.base_url,
@@ -1181,6 +1398,7 @@ def main() -> int:
 
     _write_json(Path(args.output), output)
 
+    _log(f"Wrote results to {args.output}", stage="main")
     print(f"[update_auth] tested={tested_count}")
     print(f"[update_auth] candidates={candidate_count}")
     print(f"[update_auth] success={success_count}")
