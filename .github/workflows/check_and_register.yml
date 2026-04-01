@@ -27,6 +27,11 @@ on:
         description: Run CPA cleanup before register (true/false)
         required: false
         default: "false"
+      enable_d1:
+        description: Sync credentials to D1 before CPA/Sub2Api
+        required: false
+        default: "true"
+        type: boolean
       force_register:
         description: Ignore threshold and force run (true/false)
         required: false
@@ -88,7 +93,10 @@ jobs:
       RK_FILE: ${{ vars.RK_FILE || 'rk.txt' }}
       OUTPUT_FILE: ${{ vars.REGISTER_OUTPUT_FILE || 'registered_accounts.txt' }}
 
-      AUTO_UPLOAD_CPA: ${{ vars.AUTO_UPLOAD_CPA || 'true' }}
+      AUTO_UPLOAD_D1: ${{ github.event.inputs.enable_d1 || vars.AUTO_UPLOAD_D1 || 'true' }}
+      D1_API_BASE_URL: ${{ vars.D1_API_BASE_URL || secrets.D1_API_BASE_URL || '' }}
+      D1_API_KEY: ${{ secrets.D1_API_KEY }}
+      AUTO_UPLOAD_CPA: ${{ vars.AUTO_UPLOAD_CPA || 'false' }}
       CPA_BASE_URL: ${{ secrets.CPA_BASE_URL }}
       CPA_MANAGEMENT_KEY: ${{ secrets.CPA_MANAGEMENT_KEY }}
       CPA_MIN_CANDIDATES: ${{ vars.CPA_MIN_CANDIDATES || '200' }}

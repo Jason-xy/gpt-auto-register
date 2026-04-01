@@ -1,0 +1,16 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "sub2api-d1-sync",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-04-01",
+  "observability": {
+    "enabled": true
+  },
+  "d1_databases": [
+    {
+      "binding": "sub2api_db",
+      "database_name": "sub2api-db",
+      "database_id": "b1d5a5b8-4bff-445f-bb67-c7f5a1676a08"
+    }
+  ]
+}

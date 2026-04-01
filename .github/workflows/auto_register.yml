@@ -39,6 +39,11 @@ on:
         required: false
         default: 'true'
         type: boolean
+      enable_d1:
+        description: '先同步到 D1'
+        required: false
+        default: 'true'
+        type: boolean
   schedule:
     - cron: '0 */6 * * *'  # 每 6 小时执行一次
 
@@ -68,6 +73,9 @@ env:
   REGISTER_MAX_WORKERS: ${{ github.event.inputs.max_workers || vars.REGISTER_MAX_WORKERS || '3' }}
   FORCE_REGISTER: ${{ github.event.inputs.force_register || 'false' }}
   # 同步配置
+  AUTO_UPLOAD_D1: ${{ github.event.inputs.enable_d1 || vars.AUTO_UPLOAD_D1 || 'true' }}
+  D1_API_BASE_URL: ${{ vars.D1_API_BASE_URL || secrets.D1_API_BASE_URL || '' }}
+  D1_API_KEY: ${{ secrets.D1_API_KEY }}
   ENABLE_CPA: ${{ github.event.inputs.enable_cpa || vars.ENABLE_CPA || 'true' }}
   ENABLE_SUB2API: ${{ github.event.inputs.enable_sub2api || vars.ENABLE_SUB2API || 'true' }}
   # OAuth 配置

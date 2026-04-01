@@ -86,6 +86,9 @@ def _load_config():
         "sub2api_min_candidates": 200,
         "sub2api_proxy_id": 0,
         "sub2api_auto_assign_proxy": False,
+        "auto_upload_d1": False,
+        "d1_api_base_url": "",
+        "d1_api_key": "",
         "http_timeout_seconds": 30,
         "force_ipv6": False,  # 强制使用 IPv6（提高账号存活率）
     }
@@ -144,6 +147,7 @@ HTTP_TIMEOUT = max(10, int(_CONFIG.get("http_timeout_seconds", 30)))
 FORCE_IPV6 = _as_bool(_CONFIG.get("force_ipv6", False))
 
 # 自动上传配置
+AUTO_UPLOAD_D1 = _as_bool(os.environ.get("AUTO_UPLOAD_D1", _CONFIG.get("auto_upload_d1", False)))
 AUTO_UPLOAD_CPA = _as_bool(os.environ.get("AUTO_UPLOAD_CPA", _CONFIG.get("auto_upload_cpa", False)))
 AUTO_UPLOAD_SUB2API = _as_bool(os.environ.get("AUTO_UPLOAD_SUB2API", _CONFIG.get("auto_upload_sub2api", False)))
 
@@ -1186,6 +1190,21 @@ def _register_one(idx, total, proxy, output_file, force_ipv6=None):
             # 执行注册
             reg.run_register(email, chatgpt_password, name, birthdate, mail_token)
 
+            sync_mgr = None
+            if AUTO_UPLOAD_D1 or AUTO_UPLOAD_CPA or AUTO_UPLOAD_SUB2API:
+                try:
+                    from sync_manager import AccountSyncManager
+                    sync_mgr = AccountSyncManager()
+                except Exception as sync_init_e:
+                    reg._print(f"[Sync] ❌ 初始化同步管理器失败: {sync_init_e}")
+
+            if AUTO_UPLOAD_D1:
+                reg._print("[Sync] 开始写入 D1...")
+                if sync_mgr and sync_mgr.upsert_account_to_d1(email, chatgpt_password):
+                    reg._print("[Sync] ✅ D1 写入成功")
+                else:
+                    reg._print("[Sync] ❌ D1 写入失败")
+
             # OAuth 获取 token
             oauth_ok = True
             if ENABLE_OAUTH:
@@ -1200,8 +1219,9 @@ def _register_one(idx, total, proxy, output_file, force_ipv6=None):
                     if AUTO_UPLOAD_CPA or AUTO_UPLOAD_SUB2API:
                         reg._print("[Sync] 开始同步到平台...")
                         try:
-                            from sync_manager import AccountSyncManager
-                            sync_mgr = AccountSyncManager()
+                            if sync_mgr is None:
+                                from sync_manager import AccountSyncManager
+                                sync_mgr = AccountSyncManager()
                             # 使用与 _save_codex_tokens 相同的路径计算方式
                             base_dir = os.path.dirname(os.path.abspath(__file__))
                             token_dir = TOKEN_JSON_DIR if os.path.isabs(TOKEN_JSON_DIR) else os.path.join(base_dir, TOKEN_JSON_DIR)

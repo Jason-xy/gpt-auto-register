@@ -2,6 +2,8 @@
 .vscode/
 __pycache__/
 *.pyc
+node_modules/
+.wrangler/
 
 # Local runtime / generated data
 codex_tokens/
@@ -9,6 +11,7 @@ registered_accounts.txt
 ak.txt
 rk.txt
 stable_proxy.txt
+workers/d1-sync/.dev.vars
 
 # Local secret config
 config.json

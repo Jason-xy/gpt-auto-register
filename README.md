@@ -19,8 +19,25 @@
 
 - 自动检查并按需注册：[.github/workflows/check_and_register.yml](./.github/workflows/check_and_register.yml)
 - 检查脚本入口：[scripts/check_and_register.py](./scripts/check_and_register.py)
+- D1 同步 Worker：[`workers/d1-sync`](./workers/d1-sync)
 - 示例配置模板：[config.example.json](./config.example.json)
 - 本地私密配置文件不入库：[`config.json`](./config.json) 已被 `.gitignore` 忽略
+
+## Cloudflare D1 Worker
+
+账号写入 D1 走的是一个小型 Cloudflare Worker API，而不是直接从 Python 调 Cloudflare 的控制面 API。这样做的目的很直接：运行期流量走应用入口，避免把 `wrangler` / Cloudflare API token 当业务侧数据库凭证来用。
+
+初始化步骤：
+
+1. 进入 Worker 目录：`cd workers/d1-sync`
+2. 安装依赖：`npm install`
+3. 写入 D1 schema：
+   - 本地：`npm run db:local`
+   - 远程：`npm run db:remote`
+4. 设置 Worker 运行期密钥：`npx wrangler secret put API_KEY`
+5. 部署 Worker：`npm run deploy`
+
+部署完成后，把 Worker 地址填到 `D1_API_BASE_URL`，把刚才的密钥填到 `D1_API_KEY`。不要复用 `cloudflare_api_token` 作为运行期鉴权。
 
 ## GitHub Setup
 
@@ -102,6 +119,9 @@
 | `sub2api_proxy_id` | Variable | `SUB2API_PROXY_ID` | GitHub 无代理模式下通常保留 `0` |
 | `sub2api_proxy_name` | Variable | `SUB2API_PROXY_NAME` | 可留空 |
 | `sub2api_auto_assign_proxy` | Variable | `SUB2API_AUTO_ASSIGN_PROXY` | GitHub 无代理模式下通常设 `false` |
+| `auto_upload_d1` | Variable | `AUTO_UPLOAD_D1` | 是否在同步到 CPA / Sub2Api 前先写入 D1 |
+| `d1_api_base_url` | Variable | `D1_API_BASE_URL` | D1 Worker API 地址，例如 `https://sub2api-d1-sync.<subdomain>.workers.dev` |
+| `d1_api_key` | Secret | `D1_API_KEY` | D1 Worker 的 Bearer 鉴权密钥，不要复用 Cloudflare 控制面 token |
 
 ### 最小必配
 
@@ -117,14 +137,26 @@
   - `TOPUP_MAX_COUNT`
   - `REGISTER_MAX_WORKERS`
 
+如果你还要启用 D1 账号索引，再额外配置：
+
+- `Variables`
+  - `AUTO_UPLOAD_D1=true`
+  - `D1_API_BASE_URL`
+- `Secrets`
+  - `D1_API_KEY`
+
 ### 建议不要直接从本地同步到 GitHub 的字段
 
 - 所有本地代理相关字段：`proxy`、`proxy_list_url`、`proxy_list_bearer`、`stable_proxy`
 - 本地运行产物路径如果没有特别需求，也不要自定义
 - `upload_api_url`、`upload_api_token` 这类可由其他字段推导出的字段，不必重复配置
+- `cloudflare_api_token`、`cloudflare_account_id` 只用于 Cloudflare 资源管理，不要把它们当成 D1 Worker 的业务侧鉴权
 
 ## Notes
 
 - 手动触发 workflow 时，可以填写 `manual_total_accounts` 强制指定本次注册数量
 - 定时触发时，会先检查 `sub2api` 数量，低于阈值才运行注册
 - 当前 GitHub Actions 运行模式固定为 `MODE=github`，不会使用本地代理或代理池配置
+- 运维侧可以直接查询 D1：
+  - `python sync_manager.py d1 --email foo@example.com`
+  - `python sync_manager.py d1 --limit 50`
