@@ -22,7 +22,7 @@ on:
       max_workers:
         description: Parallel worker count
         required: false
-        default: "3"
+        default: "1"
       cpa_cleanup:
         description: Run CPA cleanup before register (true/false)
         required: false

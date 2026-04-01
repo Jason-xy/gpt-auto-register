@@ -19,7 +19,7 @@ on:
       max_workers:
         description: '并发线程数'
         required: false
-        default: '3'
+        default: '1'
       min_healthy:
         description: '最小健康账号数阈值'
         required: false

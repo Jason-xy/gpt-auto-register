@@ -11,7 +11,7 @@ on:
       max_workers:
         description: "Full pipeline concurrency"
         required: false
-        default: "5"
+        default: "1"
       page_size:
         description: "Account page size"
         required: false
